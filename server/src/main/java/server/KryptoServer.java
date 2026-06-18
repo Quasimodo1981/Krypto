@@ -5,9 +5,7 @@ import common.PacketType;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
 import org.java_websocket.server.WebSocketServer;
-
 import java.net.InetSocketAddress;
-import java.net.http.WebSocket;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
