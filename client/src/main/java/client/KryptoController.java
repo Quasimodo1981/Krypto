@@ -1,5 +1,7 @@
 package client;
 
+import java.io.File;
+
 public class KryptoController implements CoreController {
 
     private final NetzwerkManager netzwerkManager;
@@ -42,8 +44,14 @@ public class KryptoController implements CoreController {
     }
 
     @Override
-    public void dateiAnkündigungEmpfangen(String name, long größe) {
-        System.out.println("[Datei-Ankündigung] " + name + " mit " + größe + " Bytes.");
+    public File dateiAnkündigungEmpfangen(String sender, String dateiName, long größe) {
+        System.out.println("\n[Terminal-Controller] 📎 Eingehende Datei von " + sender + ":");
+        System.out.println("  -> Name: " + dateiName);
+        System.out.println("  -> Größe: " + größe + " Bytes");
+        System.out.println("[Terminal-Controller] Akzeptiere Datei automatisch und speichere im Projektordner.");
+
+        // Automatische Bestimmung des Speicherorts im aktuellen Verzeichnis
+        return new java.io.File("terminal_download_" + dateiName);
     }
 
     @Override

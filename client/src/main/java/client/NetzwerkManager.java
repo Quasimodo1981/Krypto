@@ -188,7 +188,25 @@ public class NetzwerkManager {
                     String dateiName = packet.getFileName();
                     aktuelleDateiGroesse = Long.parseLong(packet.getPayload());
                     bereitsEmpfangen = 0;
-                    controller.dateiAnkündigungEmpfangen(dateiName, aktuelleDateiGroesse);
+
+                    logAnleihe("Datei angekündigt von " + packet.getSender() + ": " + dateiName);
+
+                    // GUI fragen (blockiert den Empfangsthread kurz, bis der User klickt)
+                    File speicherOrt = controller.dateiAnkündigungEmpfangen(packet.getSender(), dateiName, aktuelleDateiGroesse);
+
+                    if (speicherOrt != null) {
+                        controller.nachrichtEmpfangen("[System] Empfang von '" + dateiName + "' gestartet...");
+                        // HIER WAR DER FEHLER: Jetzt starten wir den Empfang und senden "START_READY"!
+                        starteDateiEmpfang(speicherOrt, aktuelleDateiGroesse);
+                    } else {
+                        logAnleihe("Datei-Transfer vom User abgelehnt oder abgebrochen.");
+                        controller.nachrichtEmpfangen("[System] Dateiübertragung von " + packet.getSender() + " abgelehnt.");
+
+                        // Optional: Dem Sender Bescheid geben, dass abgebrochen wurde
+                        if (webSocketTunnel != null) {
+                            webSocketTunnel.sendText(Protokoll.TRANSFER_CANCEL, true);
+                        }
+                    }
                     break;
 
                 case FILE_CHUNK:

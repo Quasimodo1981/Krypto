@@ -181,9 +181,49 @@ public class KryptoGui extends Application implements CoreController {
     }
 
     @Override
-    public void dateiAnkündigungEmpfangen(String name, long größe) {
-        Platform.runLater(() -> chatHistorie.appendText("[Datei] Eingehende Datei: " + name + " (" + größe + " Bytes)\n"));
-        // Hier könnte man später einen Dialog öffnen: "Möchtest du die Datei annehmen?"
+    public java.io.File dateiAnkündigungEmpfangen(String sender, String dateiName, long größe) {
+        // Da der NetzwerkManager diese Methode aus einem Hintergrund-Thread aufruft,
+        // müssen wir das Ganze synchron auf den JavaFX-Thread zwingen und auf das Ergebnis warten!
+        java.util.concurrent.FutureTask<java.io.File> dialogTask = new java.util.concurrent.FutureTask<>(() -> {
+
+            // 1. Abfrage-Dialog: Möchtest du die Datei annehmen?
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Eingehende Datei");
+            alert.setHeaderText("Datei-Transfer angefordert");
+            alert.setContentText(sender + " möchte dir eine Datei senden:\n\n" +
+                    "Name: " + dateiName + "\n" +
+                    "Größe: " + (größe / 1024) + " KB\n\n" +
+                    "Möchtest du diese Datei empfangen?");
+
+            ButtonType buttonJa = new ButtonType("Annehmen");
+            ButtonType buttonNein = new ButtonType("Ablehnen", ButtonBar.ButtonData.CANCEL_CLOSE);
+            alert.getButtonTypes().setAll(buttonJa, buttonNein);
+
+            java.util.Optional<ButtonType> result = alert.showAndWait();
+
+            if (result.isPresent() && result.get() == buttonJa) {
+                // 2. Speicherort-Dialog: Wo soll sie hin?
+                javafx.stage.FileChooser fileChooser = new javafx.stage.FileChooser();
+                fileChooser.setTitle("Datei speichern unter...");
+                fileChooser.setInitialFileName(dateiName); // Schlage den Originalnamen vor
+
+                // Dialog anzeigen
+                java.io.File speicherZiel = fileChooser.showSaveDialog(chatHistorie.getScene().getWindow());
+                return speicherZiel; // Kann null sein, wenn im FileChooser abgebrochen wurde
+            }
+
+            return null; // Abgelehnt
+        });
+
+        Platform.runLater(dialogTask);
+
+        try {
+            // Wartet, bis der User die Dialoge bedient hat und gibt das File (oder null) an den NetzwerkManager zurück
+            return dialogTask.get();
+        } catch (Exception e) {
+            System.err.println("Fehler beim Anzeigen der Datei-Dialoge: " + e.getMessage());
+            return null;
+        }
     }
 
     @Override public void setSendeUndAbbruchZustand(boolean transferiert) {}
