@@ -2,9 +2,9 @@ package server;
 
 import common.KryptoPacket;
 import common.PacketType;
-import org.java-websocket.WebSocket;
-import org.java-websocket.handshake.ClientHandshake;
-import org.java-websocket.server.WebSocketServer;
+import org.java_websocket.WebSocket;
+import org.java_websocket.handshake.ClientHandshake;
+import org.java_websocket.server.WebSocketServer;
 
 import java.net.InetSocketAddress;
 import java.net.http.WebSocket;
