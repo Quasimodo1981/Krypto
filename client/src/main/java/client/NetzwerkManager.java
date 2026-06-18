@@ -1,5 +1,7 @@
 package client;
 
+import common.KryptoPacket;
+import common.PacketType;
 import javax.crypto.Cipher;
 import java.io.*;
 import java.net.URI;
@@ -88,6 +90,10 @@ public class NetzwerkManager {
 
                                         if ("_NEW_CLIENT_CONNECTED_".equals(kompletteZeile)) {
                                             logAnleihe("Relay meldet: Ein neuer Chat-Teilnehmer hat angedockt!");
+                                        } else if ("START_READY".equals(kompletteZeile)) {
+                                            // JETZT: Die Gegenseite hat das Signal gegeben, wir starten den Versand!
+                                            logAnleihe("Gegenseite ist bereit. Starte echten Datenversand.");
+                                            starteEchtenDateiDatenversand();
                                         } else {
                                             verarbeiteEinzelneZeile(kompletteZeile);
                                         }
@@ -246,7 +252,8 @@ public class NetzwerkManager {
         this.wartendeDateiZumVersand = datei;
         controller.setSendeUndAbbruchZustand(true);
 
-        // Wir schicken einen FILE_HEADER. Die Dateigröße packen wir in die Payload, den Namen ins fileName-Feld
+        // Wir senden NUR den Header. Wir warten mit dem Senden der Daten,
+        // bis die Gegenseite "START_READY" zurückschickt!
         KryptoPacket packet = new KryptoPacket(PacketType.FILE_HEADER, controller.getEigenerName(), String.valueOf(datei.length()), datei.getName());
         webSocketTunnel.sendText(packet.toJson(), true);
     }
