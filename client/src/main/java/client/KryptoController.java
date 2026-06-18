@@ -5,6 +5,11 @@ public class KryptoController implements CoreController {
     private final NetzwerkManager netzwerkManager;
     private final KonfigManager konfigManager;
 
+    @Override
+    public void updateTeilnehmerListe(java.util.List<String> userListe) {
+        System.out.println("[Terminal-Controller] Aktuelle User im Netz: " + userListe);
+    }
+
     public KryptoController() {
         this.konfigManager = new KonfigManager();
         // Fehler 2 Fix: Nur 'this' übergeben, da der Manager nur den Controller braucht

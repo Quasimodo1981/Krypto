@@ -12,4 +12,5 @@ public interface CoreController {
     KonfigManager getKonfigManager();
     String getEigenerName();
     void partnerIdentifiziert(String anzuzeigenderName, boolean verbunden);
+    void updateTeilnehmerListe(java.util.List<String> userListe);
 }

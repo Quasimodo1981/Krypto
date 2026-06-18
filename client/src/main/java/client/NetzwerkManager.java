@@ -25,6 +25,7 @@ public class NetzwerkManager {
     private ScheduledExecutorService heartbeatScheduler;
     private FileOutputStream dateiTargetStream = null;
     private Cipher entschluesselungsCipher = null;
+    private java.util.List<String> aktuelleDateiEmpfaenger = null;
 
     private volatile boolean laeuft = true;
     private volatile boolean transferAbgebrochen = false;
@@ -157,17 +158,28 @@ public class NetzwerkManager {
                     break;
 
                 case CHAT_MESSAGE:
+                    if (packet.getSender().equals(controller.getEigenerName())) {
+                        break;
+                    }
+
+                    // Fehler-Fix 1: Wir prüfen die Liste der Empfänger statt eines einzelnen Strings
+                    boolean istPrivat = packet.getRecipients() != null && !packet.getRecipients().contains("ALL");
+
                     if ("DATA_END".equals(packet.getPayload()) && "SYSTEM".equals(packet.getSender())) {
                         if (dateiTargetStream != null) {
                             byte[] finaleBytes = entschluesselungsCipher.doFinal();
                             if (finaleBytes != null) dateiTargetStream.write(finaleBytes);
                             dateiTargetStream.flush();
                         }
-                        controller.nachrichtEmpfangen("[System] Datei erfolgreich empfangen und entschlüsselt!");
+                        controller.nachrichtEmpfangen("[System] Datei erfolgreich empfangen!");
                         schliesseDateiStreamSicher();
                         controller.setSendeUndAbbruchZustand(false);
                     } else {
-                        controller.nachrichtEmpfangen(packet.getSender() + ": " + packet.getPayload());
+                        String anzeigenText = istPrivat
+                                ? "[Flüstern von " + packet.getSender() + "] " + packet.getPayload()
+                                : packet.getSender() + ": " + packet.getPayload();
+
+                        controller.nachrichtEmpfangen(anzeigenText);
                     }
                     break;
 
@@ -193,8 +205,14 @@ public class NetzwerkManager {
                     break;
 
                 case USER_LIST_UPDATE:
-                    // Der Server schickt uns die Liste aller Räume/User (Nützlich für Multichat!)
-                    // Hier könntest du später deine UI updaten, wer alles online ist (packet.getPayload())
+                    if (packet.getPayload() != null && !packet.getPayload().isEmpty()) {
+                        // Teilt den String bei jedem Komma auf
+                        String[] userArray = packet.getPayload().split(",");
+                        java.util.List<String> temporaereListe = java.util.Arrays.asList(userArray);
+
+                        // Ab an die GUI!
+                        controller.updateTeilnehmerListe(temporaereListe);
+                    }
                     break;
             }
 
@@ -233,10 +251,9 @@ public class NetzwerkManager {
     }
 
     // --- TEXT SENDEN ---
-    public void sendeText(String text) {
+    public void sendeText(String text, java.util.List<String> empfaenger) {
         if (webSocketTunnel != null && !dateiModusAktiv) {
-            // Wir packen den Text in unser neues JSON-Paket
-            KryptoPacket packet = new KryptoPacket(PacketType.CHAT_MESSAGE, controller.getEigenerName(), text);
+            KryptoPacket packet = new KryptoPacket(PacketType.CHAT_MESSAGE, controller.getEigenerName(), empfaenger, text);
             webSocketTunnel.sendText(packet.toJson(), true);
         }
     }
@@ -244,17 +261,17 @@ public class NetzwerkManager {
     // --- DATEIVERSAND VIA WEBSOCKET ---
     private File wartendeDateiZumVersand = null;
 
-    public void sendeDatei(File datei) {
+    public void sendeDatei(java.io.File datei, java.util.List<String> empfaenger) {
         if (webSocketTunnel == null) return;
 
         transferAbgebrochen = false;
         dateiModusAktiv = true;
         this.wartendeDateiZumVersand = datei;
+        this.aktuelleDateiEmpfaenger = empfaenger; // <-- Merk dir die Empfänger für die Chunks!
         controller.setSendeUndAbbruchZustand(true);
 
-        // Wir senden NUR den Header. Wir warten mit dem Senden der Daten,
-        // bis die Gegenseite "START_READY" zurückschickt!
-        KryptoPacket packet = new KryptoPacket(PacketType.FILE_HEADER, controller.getEigenerName(), String.valueOf(datei.length()), datei.getName());
+        // Header mit der Liste abschicken
+        KryptoPacket packet = new KryptoPacket(PacketType.FILE_HEADER, controller.getEigenerName(), empfaenger, String.valueOf(datei.length()), datei.getName());
         webSocketTunnel.sendText(packet.toJson(), true);
     }
 
@@ -263,6 +280,9 @@ public class NetzwerkManager {
 
         new Thread(() -> {
             File datei = wartendeDateiZumVersand;
+            // Nutze die gemerkten Empfänger oder Fallback auf ALL
+            java.util.List<String> empfaenger = aktuelleDateiEmpfaenger != null ? aktuelleDateiEmpfaenger : java.util.List.of("ALL");
+
             try (FileInputStream fis = new FileInputStream(datei)) {
                 Cipher cipher = KryptoEngine.getCipher(Cipher.ENCRYPT_MODE);
                 byte[] puffer = new byte[12288];
@@ -272,7 +292,6 @@ public class NetzwerkManager {
 
                 logAnleihe("Starte Binär-Datenübertragung für: " + datei.getName());
 
-                // Suchen in starteEchtenDateiDatenversand():
                 while ((gelesen = fis.read(puffer)) != -1 && !transferAbgebrochen) {
                     byte[] kryptoBytes;
                     if (gesamtGesendet + gelesen >= dateiGroesse) {
@@ -284,8 +303,8 @@ public class NetzwerkManager {
                     if (kryptoBytes != null && kryptoBytes.length > 0) {
                         String base64Zeile = Base64.getEncoder().encodeToString(kryptoBytes);
 
-                        // HIER GEÄNDERT: Statt "DATA_CHUNK:" senden wir nun ein echtes FILE_CHUNK-Paket
-                        KryptoPacket chunkPacket = new KryptoPacket(PacketType.FILE_CHUNK, controller.getEigenerName(), base64Zeile, datei.getName());
+                        // Fehler-Fix 2: Nutze den korrekten Konstruktor mit der Empfänger-Liste!
+                        KryptoPacket chunkPacket = new KryptoPacket(PacketType.FILE_CHUNK, controller.getEigenerName(), empfaenger, base64Zeile, datei.getName());
                         webSocketTunnel.sendText(chunkPacket.toJson(), true);
                     }
                     gesamtGesendet += gelesen;
@@ -295,11 +314,8 @@ public class NetzwerkManager {
                 if (transferAbgebrochen) {
                     controller.nachrichtEmpfangen("[System] Dateiübertragung abgebrochen.");
                 } else {
-                    // HIER GEÄNDERT: Das DATA_END verpacken wir in eine normale Textnachricht oder ein Abbruchsignal –
-                    // am einfachsten senden wir ein leeres FILE_CHUNK oder nutzen ein separates Signal.
-                    // Wir nutzen einfach eine System-Chatnachricht, die dem Server signalisiert: Fertig!
-                    // Oder wir senden ein "Leeres Häppchen" als End-Signal.
-                    KryptoPacket endPacket = new KryptoPacket(PacketType.CHAT_MESSAGE, "SYSTEM", "DATA_END");
+                    // Auch das End-Paket schicken wir sauber an die Empfängergruppe
+                    KryptoPacket endPacket = new KryptoPacket(PacketType.CHAT_MESSAGE, "SYSTEM", empfaenger, "DATA_END");
                     webSocketTunnel.sendText(endPacket.toJson(), true);
                     controller.nachrichtEmpfangen("[System] Datei '" + datei.getName() + "' erfolgreich gesendet!");
                 }
@@ -308,6 +324,7 @@ public class NetzwerkManager {
                 controller.nachrichtEmpfangen("[System] Fehler beim Senden: " + e.getMessage());
             } finally {
                 wartendeDateiZumVersand = null;
+                aktuelleDateiEmpfaenger = null; // Wieder freigeben
                 dateiModusAktiv = false;
                 controller.setSendeUndAbbruchZustand(false);
             }

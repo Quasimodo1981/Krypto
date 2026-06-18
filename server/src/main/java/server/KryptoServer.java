@@ -11,7 +11,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class KryptoServer extends WebSocketServer {
 
-    // Speichert alle aktiven Verbindungen und ordnet ihnen (falls bekannt) eine UUID oder einen Namen zu
     private final Map<WebSocket, String> clientMap = new ConcurrentHashMap<>();
 
     public KryptoServer(int port) {
@@ -26,7 +25,6 @@ public class KryptoServer extends WebSocketServer {
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
         System.out.println("Neuer Client versucht anzudocken: " + conn.getRemoteSocketAddress());
-        // Temporär in der Map registrieren, bis er sein IDENTITY-Paket schickt
         clientMap.put(conn, "Unbekannt");
     }
 
@@ -40,29 +38,31 @@ public class KryptoServer extends WebSocketServer {
     @Override
     public void onMessage(WebSocket conn, String message) {
         try {
-            // Hier kommt die Magie: Wir parsen das JSON direkt in unser Common-Objekt!
             KryptoPacket packet = KryptoPacket.fromJson(message);
 
             switch (packet.getType()) {
                 case CONNECT:
-                    // Client meldet sich mit seinem Namen an
                     clientMap.put(conn, packet.getSender());
                     System.out.println("Client erfolgreich registriert: " + packet.getSender());
                     broadcastUserList();
                     break;
 
                 case CHAT_MESSAGE:
-                    System.out.println("Chat von [" + packet.getSender() + "]: Leite an alle weiter.");
-                    // Multichat-Logik: Nachricht an ALLE verbundenen Clients weiterleiten
-                    broadcastExcept(message, null);
-                    break;
-
                 case FILE_HEADER:
                 case FILE_CHUNK:
-                    // Für den anonymen oder gezielten File-Transfer:
-                    // Aktuell leiten wir es an alle weiter (außer den Sender selbst), 
-                    // damit die Gegenstelle es abfangen kann.
-                    broadcastExcept(message, conn);
+                    java.util.List<String> empfaengerListe = packet.getRecipients();
+
+                    if (empfaengerListe.contains("ALL")) {
+                        // Globaler Broadcast
+                        System.out.println("[" + packet.getType() + "] von " + packet.getSender() + " an ALLE.");
+                        broadcastExcept(message, conn);
+                    } else {
+                        // Multicast: An jede Person in der Liste einzeln zustellen
+                        System.out.println("[" + packet.getType() + "] von " + packet.getSender() + " an Gruppen-Auswahl: " + empfaengerListe);
+                        for (String targetName : empfaengerListe) {
+                            routeToTarget(message, targetName);
+                        }
+                    }
                     break;
             }
         } catch (Exception e) {
@@ -75,7 +75,20 @@ public class KryptoServer extends WebSocketServer {
         System.err.println("Server-Fehler bei Verbindung " + (conn != null ? conn.getRemoteSocketAddress() : "global") + ": " + ex.getMessage());
     }
 
-    // Hilfsmethode: Sendet eine Nachricht an alle außer an den angegebenen Client
+    // Hilfsmethode: Sendet das Paket gezielt NUR an die Session des Zielnutzers
+    private boolean routeToTarget(String rawMessage, String targetName) {
+        for (Map.Entry<WebSocket, String> entry : clientMap.entrySet()) {
+            if (entry.getValue().equals(targetName)) {
+                WebSocket targetConn = entry.getKey();
+                if (targetConn.isOpen()) {
+                    targetConn.send(rawMessage);
+                    return true; // Gefunden und zugestellt
+                }
+            }
+        }
+        return false;
+    }
+
     private void broadcastExcept(String rawMessage, WebSocket excludeConn) {
         for (WebSocket client : clientMap.keySet()) {
             if (client != excludeConn && client.isOpen()) {
@@ -84,17 +97,18 @@ public class KryptoServer extends WebSocketServer {
         }
     }
 
-    // Hilfsmethode: Sendet die Liste aller online User an alle Clients
     private void broadcastUserList() {
-        String userList = String.join(",", clientMap.values());
+        // Wir filtern "Unbekannt" heraus, falls sich jemand gerade erst verbindet
+        java.util.List<String> aktiveUser = clientMap.values().stream()
+                .filter(name -> !"Unbekannt".equals(name))
+                .toList();
+
+        String userList = String.join(",", aktiveUser);
         KryptoPacket updatePacket = new KryptoPacket(PacketType.USER_LIST_UPDATE, "SERVER", userList);
         broadcastExcept(updatePacket.toJson(), null);
     }
 
-    // Haupt-Startmethode für den Render-Server
     public static void main(String[] args) {
-        // Render weist uns dynamisch einen Port über die Umgebungsvariable "PORT" zu. 
-        // Wenn lokal gestartet wird, nutzen wir standardmäßig 10000.
         String portEnv = System.getenv("PORT");
         int port = (portEnv != null) ? Integer.parseInt(portEnv) : 10000;
 

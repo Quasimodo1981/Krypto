@@ -1,42 +1,52 @@
 package common;
 
 import com.google.gson.Gson;
+import java.util.ArrayList;
+import java.util.List;
 
 public class KryptoPacket {
     private static final Gson gson = new Gson();
 
     private PacketType type;
     private String sender;
-    private String payload;    // Verschlüsselter Chat-Text ODER Base64-verschlüsselte Dateihäppchen
-    private String fileName;   // Optional: Nur für Dateitransfers wichtig
+    private List<String> recipients; // <-- JETZT NEU: Eine Liste von Empfängern!
+    private String payload;
+    private String fileName;
 
-    // Konstruktor für die einfache Erstellung
+    // Konstruktor für Broadcast (Standard)
     public KryptoPacket(PacketType type, String sender, String payload) {
         this.type = type;
         this.sender = sender;
+        this.recipients = new ArrayList<>();
+        this.recipients.add("ALL");
         this.payload = payload;
     }
 
-    // Konstruktor mit Dateiname (für File-Transfer)
-    public KryptoPacket(PacketType type, String sender, String payload, String fileName) {
+    // Konstruktor mit einer Liste von Empfängern
+    public KryptoPacket(PacketType type, String sender, List<String> recipients, String payload) {
         this.type = type;
         this.sender = sender;
+        this.recipients = recipients == null ? new ArrayList<>() : recipients;
+        if (this.recipients.isEmpty()) this.recipients.add("ALL");
+        this.payload = payload;
+    }
+
+    // Konstruktor mit Liste und Dateiname
+    public KryptoPacket(PacketType type, String sender, List<String> recipients, String payload, String fileName) {
+        this.type = type;
+        this.sender = sender;
+        this.recipients = recipients == null ? new ArrayList<>() : recipients;
+        if (this.recipients.isEmpty()) this.recipients.add("ALL");
         this.payload = payload;
         this.fileName = fileName;
     }
 
-    // Hilfsmethoden zur JSON-Umwandlung (Serialisierung)
-    public String toJson() {
-        return gson.toJson(this);
-    }
+    public String toJson() { return gson.toJson(this); }
+    public static KryptoPacket fromJson(String json) { return gson.fromJson(json, KryptoPacket.class); }
 
-    public static KryptoPacket fromJson(String json) {
-        return gson.fromJson(json, KryptoPacket.class);
-    }
-
-    // Getter (und ggf. Setter)
     public PacketType getType() { return type; }
     public String getSender() { return sender; }
+    public List<String> getRecipients() { return recipients; }
     public String getPayload() { return payload; }
     public String getFileName() { return fileName; }
 }
