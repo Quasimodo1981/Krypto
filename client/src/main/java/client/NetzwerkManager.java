@@ -191,38 +191,46 @@ public class NetzwerkManager {
                 case FILE_HEADER:
                     // Eine Datei wird angekündigt
                     String dateiName = packet.getFileName();
-                    aktuelleDateiGroesse = Long.parseLong(packet.getPayload());
-                    bereitsEmpfangen = 0;
+                    this.aktuelleDateiGroesse = Long.parseLong(packet.getPayload());
+                    this.bereitsEmpfangen = 0;
+                    this.partnerWunschName = packet.getSender();
 
                     logAnleihe("Datei angekündigt von " + packet.getSender() + ": " + dateiName);
 
-                    // GUI fragen (blockiert den Empfangsthread kurz, bis der User klickt)
-                    File speicherOrt = controller.dateiAnkündigungEmpfangen(packet.getSender(), dateiName, aktuelleDateiGroesse);
+                    // Der GUI-Dialog wird in einen separaten Thread ausgelagert,
+                    // damit der Netzwerk-Thread des Clients flüssig weiterläuft.
+                    new Thread(() -> {
+                        File speicherOrt = controller.dateiAnkündigungEmpfangen(packet.getSender(), dateiName, aktuelleDateiGroesse);
 
-                    if (speicherOrt != null) {
-                        controller.nachrichtEmpfangen("[System] Empfang von '" + dateiName + "' gestartet...");
-                        // HIER WAR DER FEHLER: Jetzt starten wir den Empfang und senden "START_READY"!
-                        starteDateiEmpfang(speicherOrt, aktuelleDateiGroesse);
-                    } else {
-                        logAnleihe("Datei-Transfer vom User abgelehnt oder abgebrochen.");
-                        controller.nachrichtEmpfangen("[System] Dateiübertragung von " + packet.getSender() + " abgelehnt.");
+                        if (speicherOrt != null) {
+                            controller.nachrichtEmpfangen("[System] Empfang von '" + dateiName + "' gestartet...");
+                            starteDateiEmpfang(speicherOrt, aktuelleDateiGroesse);
+                        } else {
+                            logAnleihe("Datei-Transfer vom User abgelehnt oder abgebrochen.");
+                            controller.nachrichtEmpfangen("[System] Dateiübertragung von " + packet.getSender() + " abgelehnt.");
 
-                        // Optional: Dem Sender Bescheid geben, dass abgebrochen wurde
-                        if (webSocketTunnel != null) {
-                            webSocketTunnel.sendText(Protokoll.TRANSFER_CANCEL, true);
+                            if (webSocketTunnel != null) {
+                                webSocketTunnel.sendText(Protokoll.TRANSFER_CANCEL, true);
+                            }
                         }
-                    }
+                    }).start();
                     break;
 
                 case FILE_CHUNK:
                     if (dateiTargetStream != null && !transferAbgebrochen) {
-                        // Direkt schreiben ohne Entschlüsselung!
-                        byte[] klarTextBytes = Base64.getDecoder().decode(packet.getPayload());
+                    // Base64 decodieren
+                    byte[] kryptoBytes = Base64.getDecoder().decode(packet.getPayload());
+
+                    // REAKTIVIERT: Hier wird der Block entschlüsselt!
+                    byte[] klarTextBytes = entschluesselungsCipher.update(kryptoBytes);
+
+                    if (klarTextBytes != null) {
                         dateiTargetStream.write(klarTextBytes);
                         bereitsEmpfangen += klarTextBytes.length;
-                        controller.updateFortschritt((double) bereitsEmpfangen / aktuelleDateiGroesse);
                     }
-                    break;
+                    controller.updateFortschritt((double) bereitsEmpfangen / aktuelleDateiGroesse);
+                }
+                break;
 
                 case USER_LIST_UPDATE:
                     if (packet.getPayload() != null && !packet.getPayload().isEmpty()) {
@@ -315,12 +323,20 @@ public class NetzwerkManager {
 
                 // TEMPORÄRER TEST: Rohe Bytes ohne Cipher senden
                 while ((gelesen = fis.read(puffer)) != -1 && !transferAbgebrochen) {
-                    // Wir nehmen die ungereinigten, unverschlüsselten RoBytes!
-                    byte[] testPuffer = java.util.Arrays.copyOf(puffer, gelesen);
-                    String base64Zeile = Base64.getEncoder().encodeToString(testPuffer);
+                    byte[] kryptoBytes;
+                    // Verschlüsseln: doFinal für den letzten Block, update für alle davor
+                    if (gesamtGesendet + gelesen >= dateiGroesse) {
+                        kryptoBytes = cipher.doFinal(puffer, 0, gelesen);
+                    } else {
+                        kryptoBytes = cipher.update(puffer, 0, gelesen);
+                    }
 
-                    KryptoPacket chunkPacket = new KryptoPacket(PacketType.FILE_CHUNK, controller.getEigenerName(), empfaenger, base64Zeile, datei.getName());
-                    webSocketTunnel.sendText(chunkPacket.toJson(), true).join();
+                    if (kryptoBytes != null && kryptoBytes.length > 0) {
+                        String base64Zeile = Base64.getEncoder().encodeToString(kryptoBytes);
+
+                        KryptoPacket chunkPacket = new KryptoPacket(PacketType.FILE_CHUNK, controller.getEigenerName(), empfaenger, base64Zeile, datei.getName());
+                        webSocketTunnel.sendText(chunkPacket.toJson(), true).join();
+                    }
 
                     gesamtGesendet += gelesen;
                     controller.updateFortschritt((double) gesamtGesendet / dateiGroesse);
