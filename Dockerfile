@@ -8,14 +8,14 @@ COPY common ./common
 COPY server ./server
 COPY client ./client
 
-# Baut das Server-Modul und kopiert die Abhängigkeiten direkt in den target-Ordner
-RUN mvn clean package dependency:copy-dependencies -DoutputDirectory=server/target/dependency -pl server -am -DskipTests
+# JETZT KORRIGIERT: Der Output-Pfad ist nun absolut auf /app/server/target/dependency gesetzt
+RUN mvn clean package dependency:copy-dependencies -DoutputDirectory=/app/server/target/dependency -pl server -am -DskipTests
 
 # --- Phase 2: Leichtgewichtiges Laufzeit-Image ---
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
-# Kopiere die gebaute JAR-Datei (jetzt mit dem korrekten Namen!) und die Dependencies
+# Kopiere die gebaute JAR-Datei und die Dependencies
 COPY --from=builder /app/server/target/krypto-server-1.0-SNAPSHOT.jar ./server.jar
 COPY --from=builder /app/server/target/dependency ./dependency
 
