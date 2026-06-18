@@ -298,7 +298,6 @@ public class NetzwerkManager {
 
         new Thread(() -> {
             File datei = wartendeDateiZumVersand;
-            // Nutze die gemerkten Empfänger oder Fallback auf ALL
             java.util.List<String> empfaenger = aktuelleDateiEmpfaenger != null ? aktuelleDateiEmpfaenger : java.util.List.of("ALL");
 
             try (FileInputStream fis = new FileInputStream(datei)) {
@@ -321,9 +320,10 @@ public class NetzwerkManager {
                     if (kryptoBytes != null && kryptoBytes.length > 0) {
                         String base64Zeile = Base64.getEncoder().encodeToString(kryptoBytes);
 
-                        // Fehler-Fix 2: Nutze den korrekten Konstruktor mit der Empfänger-Liste!
                         KryptoPacket chunkPacket = new KryptoPacket(PacketType.FILE_CHUNK, controller.getEigenerName(), empfaenger, base64Zeile, datei.getName());
-                        webSocketTunnel.sendText(chunkPacket.toJson(), true);
+
+                        // WICHTIGER FIX: .join() erzwingt das Warten, bis das Paket übertragen wurde!
+                        webSocketTunnel.sendText(chunkPacket.toJson(), true).join();
                     }
                     gesamtGesendet += gelesen;
                     controller.updateFortschritt((double) gesamtGesendet / dateiGroesse);
@@ -332,17 +332,18 @@ public class NetzwerkManager {
                 if (transferAbgebrochen) {
                     controller.nachrichtEmpfangen("[System] Dateiübertragung abgebrochen.");
                 } else {
-                    // Auch das End-Paket schicken wir sauber an die Empfängergruppe
+                    // Auch hier blockierend senden, damit das Signal garantiert ankommt
                     KryptoPacket endPacket = new KryptoPacket(PacketType.CHAT_MESSAGE, "SYSTEM", empfaenger, "DATA_END");
-                    webSocketTunnel.sendText(endPacket.toJson(), true);
+                    webSocketTunnel.sendText(endPacket.toJson(), true).join();
                     controller.nachrichtEmpfangen("[System] Datei '" + datei.getName() + "' erfolgreich gesendet!");
                 }
             } catch (Exception e) {
                 logAnleihe("Fehler beim Dateitransfer: " + e.getMessage());
                 controller.nachrichtEmpfangen("[System] Fehler beim Senden: " + e.getMessage());
+                e.printStackTrace(); // Damit du Fehler im Terminal sofort siehst!
             } finally {
                 wartendeDateiZumVersand = null;
-                aktuelleDateiEmpfaenger = null; // Wieder freigeben
+                aktuelleDateiEmpfaenger = null;
                 dateiModusAktiv = false;
                 controller.setSendeUndAbbruchZustand(false);
             }
@@ -385,6 +386,7 @@ public class NetzwerkManager {
 
     private void teardownVerbindung() {
         stopHeartbeatSender();
+        schliesseDateiStreamSicher();
         controller.setEingabeAktiv(false);
         webSocketTunnel = null;
         dateiModusAktiv = false;
