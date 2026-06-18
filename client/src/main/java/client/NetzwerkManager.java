@@ -211,6 +211,7 @@ public class NetzwerkManager {
 
                 case FILE_CHUNK:
                     // Ein verschlüsseltes Dateihäppchen kommt an
+                    System.out.println("-> Chunk erhalten! Größe im JSON: " + packet.getPayload().length());
                     if (dateiTargetStream != null && !transferAbgebrochen) {
                         byte[] kryptoBytes = Base64.getDecoder().decode(packet.getPayload());
                         byte[] klarTextBytes = entschluesselungsCipher.update(kryptoBytes);

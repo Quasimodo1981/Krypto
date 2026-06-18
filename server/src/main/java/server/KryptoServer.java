@@ -38,6 +38,19 @@ public class KryptoServer extends WebSocketServer {
     @Override
     public void onMessage(WebSocket conn, String message) {
         try {
+            // 1. SCHUTZSCHILD: Wenn es ein reines Text-Signal ist, nicht als JSON parsen!
+            if ("START_READY".equals(message)) {
+                System.out.println("[Signal] START_READY empfangen. Leite an alle potenziellen Sender weiter.");
+                broadcastExcept(message, conn);
+                return;
+            }
+
+            if (message.startsWith("_HEARTBEAT_")) {
+                // Heartbeats filtert der Server direkt ab (falls sie nicht schon im Client beantwortet werden)
+                return;
+            }
+
+            // 2. Reguläre JSON-Pakete verarbeiten
             KryptoPacket packet = KryptoPacket.fromJson(message);
 
             switch (packet.getType()) {
@@ -52,13 +65,11 @@ public class KryptoServer extends WebSocketServer {
                 case FILE_CHUNK:
                     java.util.List<String> empfaengerListe = packet.getRecipients();
 
-                    if (empfaengerListe.contains("ALL")) {
-                        // Globaler Broadcast
+                    if (empfaengerListe == null || empfaengerListe.contains("ALL")) {
                         System.out.println("[" + packet.getType() + "] von " + packet.getSender() + " an ALLE.");
                         broadcastExcept(message, conn);
                     } else {
-                        // Multicast: An jede Person in der Liste einzeln zustellen
-                        System.out.println("[" + packet.getType() + "] von " + packet.getSender() + " an Gruppen-Auswahl: " + empfaengerListe);
+                        System.out.println("[" + packet.getType() + "] von " + packet.getSender() + " an Liste: " + empfaengerListe);
                         for (String targetName : empfaengerListe) {
                             routeToTarget(message, targetName);
                         }

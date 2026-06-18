@@ -5,7 +5,7 @@ import java.io.File;
 public interface CoreController {
     void logStatus(String status);
     void nachrichtEmpfangen(String msg);
-    java.io.File dateiAnkündigungEmpfangen(String sender, String dateiName, long größe);
+    File dateiAnkündigungEmpfangen(String sender, String dateiName, long größe);
     void setEingabeAktiv(boolean aktiv);
     void setSendeUndAbbruchZustand(boolean transferiert);
     void updateFortschritt(double wert);
