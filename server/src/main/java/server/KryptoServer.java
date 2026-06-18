@@ -64,12 +64,10 @@ public class KryptoServer extends WebSocketServer {
                 case FILE_HEADER:
                 case FILE_CHUNK:
                     java.util.List<String> empfaengerListe = packet.getRecipients();
-
                     if (empfaengerListe == null || empfaengerListe.contains("ALL")) {
-                        System.out.println("[" + packet.getType() + "] von " + packet.getSender() + " an ALLE.");
                         broadcastExcept(message, conn);
                     } else {
-                        System.out.println("[" + packet.getType() + "] von " + packet.getSender() + " an Liste: " + empfaengerListe);
+                        // Das Signal wird nun genau wie Chunks exakt an den Empfänger geroutet!
                         for (String targetName : empfaengerListe) {
                             routeToTarget(message, targetName);
                         }

@@ -69,17 +69,16 @@ public class NetzwerkManager {
                                 public void onOpen(WebSocket webSocket) {
                                     logAnleihe("WebSocket-Handshake erfolgreich! Leitung steht.");
 
-                                    // Wir schicken ein CONNECT-Paket mit unserem Namen an den Server
                                     KryptoPacket loginPacket = new KryptoPacket(PacketType.CONNECT, controller.getEigenerName(), "Möchte chatten");
                                     webSocket.sendText(loginPacket.toJson(), true);
 
                                     controller.zeigeLiveStatus(true, "VERBUNDEN – Cloud-WebSocket aktiv");
                                     controller.setEingabeAktiv(true);
 
-                                    // Heartbeat starten
                                     startHeartbeatSender();
 
-                                    WebSocket.Listener.super.onOpen(webSocket);
+                                    // Auch hier direkt die Leitung für eingehende Texte öffnen!
+                                    webSocket.request(1);
                                 }
 
                                 @Override
@@ -91,15 +90,13 @@ public class NetzwerkManager {
 
                                         if ("_NEW_CLIENT_CONNECTED_".equals(kompletteZeile)) {
                                             logAnleihe("Relay meldet: Ein neuer Chat-Teilnehmer hat angedockt!");
-                                        } else if ("START_READY".equals(kompletteZeile)) {
-                                            // JETZT: Die Gegenseite hat das Signal gegeben, wir starten den Versand!
-                                            logAnleihe("Gegenseite ist bereit. Starte echten Datenversand.");
-                                            starteEchtenDateiDatenversand();
                                         } else {
+                                            // Jede andere Nachricht (auch unser Signal) ist jetzt ein valides JSON-Paket!
                                             verarbeiteEinzelneZeile(kompletteZeile);
                                         }
                                     }
-                                    return WebSocket.Listener.super.onText(webSocket, data, last);
+                                    webSocket.request(1);
+                                    return null;
                                 }
 
                                 @Override
@@ -162,6 +159,14 @@ public class NetzwerkManager {
                         break;
                     }
 
+                    // HIER FANGEN WIR DAS NEUE SIGNAL AB!
+                    if ("START_READY_SIGNAL".equals(packet.getPayload())) {
+                        logAnleihe("Gegenseite (" + packet.getSender() + ") ist bereit. Starte echten Datenversand.");
+                        System.out.println("[Signal] START_READY_SIGNAL erhalten von " + packet.getSender());
+                        starteEchtenDateiDatenversand();
+                        break; // Wichtig, damit es nicht im Chatfenster ausgegeben wird!
+                    }
+
                     // Fehler-Fix 1: Wir prüfen die Liste der Empfänger statt eines einzelnen Strings
                     boolean istPrivat = packet.getRecipients() != null && !packet.getRecipients().contains("ALL");
 
@@ -210,15 +215,11 @@ public class NetzwerkManager {
                     break;
 
                 case FILE_CHUNK:
-                    // Ein verschlüsseltes Dateihäppchen kommt an
-                    System.out.println("-> Chunk erhalten! Größe im JSON: " + packet.getPayload().length());
                     if (dateiTargetStream != null && !transferAbgebrochen) {
-                        byte[] kryptoBytes = Base64.getDecoder().decode(packet.getPayload());
-                        byte[] klarTextBytes = entschluesselungsCipher.update(kryptoBytes);
-                        if (klarTextBytes != null) {
-                            dateiTargetStream.write(klarTextBytes);
-                            bereitsEmpfangen += klarTextBytes.length;
-                        }
+                        // Direkt schreiben ohne Entschlüsselung!
+                        byte[] klarTextBytes = Base64.getDecoder().decode(packet.getPayload());
+                        dateiTargetStream.write(klarTextBytes);
+                        bereitsEmpfangen += klarTextBytes.length;
                         controller.updateFortschritt((double) bereitsEmpfangen / aktuelleDateiGroesse);
                     }
                     break;
@@ -235,9 +236,11 @@ public class NetzwerkManager {
                     break;
             }
 
-        } catch (Exception e) {
-            logAnleihe("Fehler bei der JSON-Paketverarbeitung: " + e.getMessage());
-        }
+        }  catch (Exception e) {
+        System.err.println("!!! KRITISCHER FEHLER IN DER PAKETVERARBEITUNG !!!");
+        e.printStackTrace(); // Das zwingt Java, den genauen Stacktrace ins Terminal zu drucken!
+        logAnleihe("Fehler bei der JSON-Paketverarbeitung: " + e.getMessage());
+    }
     }
 
     private void startHeartbeatSender() {
@@ -310,22 +313,15 @@ public class NetzwerkManager {
 
                 logAnleihe("Starte Binär-Datenübertragung für: " + datei.getName());
 
+                // TEMPORÄRER TEST: Rohe Bytes ohne Cipher senden
                 while ((gelesen = fis.read(puffer)) != -1 && !transferAbgebrochen) {
-                    byte[] kryptoBytes;
-                    if (gesamtGesendet + gelesen >= dateiGroesse) {
-                        kryptoBytes = cipher.doFinal(puffer, 0, gelesen);
-                    } else {
-                        kryptoBytes = cipher.update(puffer, 0, gelesen);
-                    }
+                    // Wir nehmen die ungereinigten, unverschlüsselten RoBytes!
+                    byte[] testPuffer = java.util.Arrays.copyOf(puffer, gelesen);
+                    String base64Zeile = Base64.getEncoder().encodeToString(testPuffer);
 
-                    if (kryptoBytes != null && kryptoBytes.length > 0) {
-                        String base64Zeile = Base64.getEncoder().encodeToString(kryptoBytes);
+                    KryptoPacket chunkPacket = new KryptoPacket(PacketType.FILE_CHUNK, controller.getEigenerName(), empfaenger, base64Zeile, datei.getName());
+                    webSocketTunnel.sendText(chunkPacket.toJson(), true).join();
 
-                        KryptoPacket chunkPacket = new KryptoPacket(PacketType.FILE_CHUNK, controller.getEigenerName(), empfaenger, base64Zeile, datei.getName());
-
-                        // WICHTIGER FIX: .join() erzwingt das Warten, bis das Paket übertragen wurde!
-                        webSocketTunnel.sendText(chunkPacket.toJson(), true).join();
-                    }
                     gesamtGesendet += gelesen;
                     controller.updateFortschritt((double) gesamtGesendet / dateiGroesse);
                 }
@@ -358,7 +354,17 @@ public class NetzwerkManager {
             controller.setSendeUndAbbruchZustand(true);
             dateiTargetStream = new FileOutputStream(speicherZiel);
             entschluesselungsCipher = KryptoEngine.getCipher(Cipher.DECRYPT_MODE);
-            webSocketTunnel.sendText("START_READY", true);
+
+            // JETZT ALS PAKET: Wir schicken das START_READY gezielt an den Dateisender zurück!
+            // partnerWunschName hält den Namen desjenigen, der uns den HEADER geschickt hat.
+            KryptoPacket readyPacket = new KryptoPacket(
+                    PacketType.CHAT_MESSAGE,
+                    controller.getEigenerName(),
+                    java.util.List.of(this.partnerWunschName),
+                    "START_READY_SIGNAL"
+            );
+            webSocketTunnel.sendText(readyPacket.toJson(), true);
+
         } catch (Exception e) {
             logAnleihe("Fehler beim Initialisieren des Empfangs: " + e.getMessage());
             schliesseDateiStreamSicher();
